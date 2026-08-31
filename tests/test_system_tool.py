@@ -71,6 +71,30 @@ class ParsingTests(unittest.TestCase):
             system_tool.run_cleanup(True, assume_yes=True)
         stopper.assert_not_called()
 
+    def test_simple_cleanup_flow_deletes_selected_cache(self):
+        with TemporaryDirectory() as temp:
+            home = Path(temp)
+            cache = home / ".cache/simple"
+            cache.mkdir(parents=True)
+            payload = cache / "old.cache"
+            payload.write_bytes(b"cache-data")
+            target = system_tool.CleanupTarget("simple", "test", [cache])
+            with mock.patch.object(system_tool, "user_home", return_value=home), \
+                 mock.patch.object(system_tool, "cache_targets", return_value=[target]), \
+                 mock.patch.object(system_tool, "find_safe_helpers", return_value=[]), \
+                 mock.patch("sys.stdout", new_callable=io.StringIO):
+                result = system_tool.run_cleanup(False, assume_yes=True)
+            self.assertEqual(result, 0)
+            self.assertFalse(payload.exists())
+
+    def test_app_cleanup_only_requests_sigterm(self):
+        target = system_tool.AppCleanupTarget("test", "test", ("test",))
+        with mock.patch.object(system_tool.os, "kill") as killer:
+            result = system_tool.stop_app_targets([(target, [42, 41])])
+        self.assertEqual(result, ["test: 已请求退出2个进程"])
+        killer.assert_has_calls([mock.call(42, system_tool.signal.SIGTERM),
+                                 mock.call(41, system_tool.signal.SIGTERM)])
+
     def test_replay_cleanup_does_not_match_generic_rviz(self):
         replay = next(item for item in system_tool.app_cleanup_targets() if item.name == "回放/RViz")
         self.assertNotIn("rviz2 -d", replay.markers)
