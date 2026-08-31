@@ -1,54 +1,64 @@
-# system_tool
+# 电脑卡顿助手 system_tool
 
-一个零第三方依赖、低开销的 Linux 卡顿归因终端工具。它不只展示资源数字，还会根据 CPU、内存换页、PSI、I/O、GPU 和内核告警判断“当前主要卡点”。
+面向普通用户的 Linux 卡顿诊断与安全清理工具。零第三方 Python 依赖，默认中文菜单，所有清理先预览，不会删除项目、rosbag、书签、密码或登录资料。
 
-## 使用
+## 一键安装
 
 ```bash
 cd /home/hulk/system_tool
-./system_tool.py
+./install.sh
 ```
 
-按 `Ctrl-C` 退出。工具默认只读，不会结束进程或修改系统配置。
+安装后可以在终端输入 `system-tool`，也可以在 Ubuntu 应用列表搜索“电脑卡顿助手”。卸载运行 `./uninstall.sh`，安装文件会优先移入回收站。
 
-一次性报告：
+## 傻瓜菜单
+
+直接运行 `system-tool`，菜单提供：
+
+1. 看一次当前用量
+2. 动态监控
+3. 简单清理
+4. 深度清理
+5. 只预览可清理内容
+
+按 `Ctrl-C` 退出动态监控。
+
+## 直接命令
 
 ```bash
-./system_tool.py --once
-./system_tool.py --json
+system-tool status                 # 查询一次CPU、内存、Swap、GPU和卡点
+system-tool watch                  # 动态监控
+system-tool clean                  # 简单清理，逐项确认
+system-tool deep-clean             # 深度清理，逐项确认
+system-tool deep-clean --dry-run   # 只计算，不删除
+system-tool clean --yes            # 非交互执行所有简单清理项
+system-tool status --json          # 给脚本使用的JSON
 ```
 
-关闭较慢的可选采样：
+旧命令 `./system_tool.py --once` 和 `--json` 继续兼容。
 
-```bash
-./system_tool.py --no-gpu --no-logs
-```
+## 清理边界
 
-## 刷新策略
+简单清理只处理缩略图缓存、30天前的 Chrome/Cursor 崩溃报告、本工具字节码，并可关闭 Snap Store。深度清理还会逐项询问 Chrome/Cursor 缓存、pip/npm 下载缓存和 Mesa 着色器缓存，并列出 Cursor、Chrome、飞书、微信、回放/RViz 的 RAM 与 Swap；只有用户明确选择后才会正常退出对应应用。
 
-- 每 1 秒：`/proc/stat`、内存、load、PSI、换页速率。
-- 每 3 秒：扫描进程，统计 CPU、RAM、Swap，并聚合为 Chrome、ROS/RViz、终端开发工具等任务组。
-- 每 15 秒：调用一次 `nvidia-smi`。
-- 每 60 秒：检查最近两分钟的 OOM、NVIDIA、温度和 I/O 内核告警。
-- 不读取昂贵的 `smaps`，不执行 `du`、SMART、全量 `lsof` 或历史日志扫描。
+深度清理默认不自动勾选。运行中的 Chrome/Cursor 缓存会自动跳过；`--yes` 只确认可重建缓存和 Snap Store，不会批量关闭用户应用。工具绝不运行 `swapoff`、不清空 Linux 页缓存、不碰回收站、项目或 rosbag；“回放/RViz”只匹配明确的回放辅助命令，不匹配普通 ROS 生产节点。
 
-刷新间隔均可调整：
+## 卡顿判断与低负担采样
 
-```bash
-./system_tool.py --interval 1 --process-interval 5 --gpu-interval 30 --log-interval 120
-```
+工具综合 CPU、内存、Swap-in/out、PSI、I/O `iowait`、`D` 状态进程、GPU 和内核告警，能区分“Swap 历史占用很大”和“正在从 Swap 回读导致桌面卡死”。
 
-## 判定原则
+- 每1秒：CPU、内存、load、PSI、换页速率。
+- 每3秒：进程 CPU/RAM/Swap、任务组和 D 状态。
+- 每15秒：`nvidia-smi`。
+- 每60秒：近期内核告警。
+- 不读取昂贵的 `smaps`，不执行全盘 `du`、SMART 或全量 `lsof`。
 
-- Swap 已用量本身不等于卡顿；优先看实时 swap-in/out 和 Memory PSI。
-- 高 load 本身不等于 CPU 饱和；同时参考 CPU 利用率和 CPU PSI。
-- 单个 RViz 使用 100% 表示占满一个核心，不代表整机 CPU 已用尽。
-- 进程榜使用采样间 CPU 增量，不使用从启动至今的累计平均值。
-
-## 测试
+## 开发与测试
 
 ```bash
 python3 -m unittest discover -s tests -v
+./system_tool.py status --no-gpu --no-logs
+./system_tool.py deep-clean --dry-run
 ```
 
-支持 Linux cgroup v2；无 NVIDIA GPU 或无日志权限时会降级运行。
+支持 Linux cgroup v2。无 NVIDIA GPU或无日志权限时会自动降级。

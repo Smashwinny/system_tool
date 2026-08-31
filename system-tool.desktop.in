@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=电脑卡顿助手
+Comment=查看系统用量并安全清理缓存
+Exec=@EXEC@
+Icon=utilities-system-monitor
+Terminal=true
+Categories=System;
+Keywords=system;monitor;cleanup;卡顿;清理;监控;
