@@ -46,6 +46,7 @@ class GuardConfig:
     action_cooldown_seconds: float = 600.0
     nvrm_burst_per_minute: int = 10
     log_storm_per_minute: int = 100
+    kernel_notification_cooldown_seconds: float = 600.0
 
 
 def current_boot_id() -> str:
@@ -206,6 +207,7 @@ class Guardian:
         self.stop_requested = False
         self.critical_since: float | None = None
         self.last_action = -self.config.action_cooldown_seconds
+        self.kernel_last_notified: dict[str, float] = {}
         self.ancestry = process_ancestry(os.getpid())
 
     def request_stop(self, *_: object) -> None:
@@ -217,19 +219,27 @@ class Guardian:
         return self.aggregator.summary(time.time())
 
     def _kernel_incident(self, summary: list[dict[str, Any]]) -> None:
-        if not summary:
-            return
-        top = summary[0]
-        message = str(top["message"])
-        count = int(top["count"])
-        is_xid = "xid" in message.lower()
-        is_nvrm = "nvrm" in message.lower()
-        if is_xid or (is_nvrm and count >= self.config.nvrm_burst_per_minute) or count >= self.config.log_storm_per_minute:
+        now = time.time()
+        for top in summary:
+            message = str(top["message"])
+            count = int(top["count"])
+            key = str(top["fingerprint"])
+            is_xid = "xid" in message.lower()
+            is_nvrm = "nvrm" in message.lower()
+            qualifies = (is_xid or (is_nvrm and count >= self.config.nvrm_burst_per_minute) or
+                         count >= self.config.log_storm_per_minute)
+            if not qualifies:
+                continue
+            last_notified = self.kernel_last_notified.get(key, float("-inf"))
+            if now - last_notified < self.config.kernel_notification_cooldown_seconds:
+                continue
             payload = {"kind": "kernel-alert", "timestamp": time.strftime("%F %T"),
-                       "count_per_minute": count, "message": message, "automatic_action": "none"}
+                       "fingerprint": key, "count_per_minute": count, "message": message,
+                       "notification_cooldown_seconds": self.config.kernel_notification_cooldown_seconds,
+                       "automatic_action": "none"}
             path = self.store.write_incident(payload)
             notify("system-tool：内核异常", f"{message[-120:]}\n报告：{path}")
-            self.aggregator = EventAggregator()
+            self.kernel_last_notified[key] = now
 
     def _act(self, snapshot: dict[str, Any], reason: str) -> dict[str, Any] | None:
         selected = select_offender(self.monitor.processes, self.config.offender_min_bytes,

@@ -88,6 +88,22 @@ class GuardPolicyTests(unittest.TestCase):
         self.assertIn("group-29", compact["groups"])
         self.assertNotIn("group-0", compact["groups"])
 
+    def test_kernel_notification_is_deduplicated_during_cooldown(self):
+        guardian = system_guard.Guardian.__new__(system_guard.Guardian)
+        guardian.config = system_guard.GuardConfig(kernel_notification_cooldown_seconds=600)
+        guardian.store = mock.Mock()
+        guardian.store.write_incident.return_value = Path("/state/report.json")
+        guardian.kernel_last_notified = {}
+        summary = [{"fingerprint": "nvrm-invalid-head", "count": 500,
+                    "message": "NVRM: invalid head number"}]
+        with mock.patch.object(system_guard.time, "time", side_effect=[1000, 1100, 1701]), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(summary)
+            guardian._kernel_incident(summary)
+            guardian._kernel_incident(summary)
+        self.assertEqual(guardian.store.write_incident.call_count, 2)
+        self.assertEqual(notifier.call_count, 2)
+
 
 class IncidentStoreTests(unittest.TestCase):
     def test_writes_report_and_lists_it(self):

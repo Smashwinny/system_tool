@@ -5,12 +5,18 @@ INSTALL_LIB="${XDG_DATA_HOME:-$HOME/.local/share}/system-tool"
 INSTALL_BIN="$HOME/.local/bin/system-tool"
 APPLICATION_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/system-tool.desktop"
 USER_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/system-tool-guard.service"
+LAYOUT_SCRIPT="$HOME/.local/bin/fix-monitor-layout.sh"
+LAYOUT_BACKUP="$INSTALL_LIB/backups/fix-monitor-layout.sh.pre-1.2.1"
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user disable --now system-tool-guard.service >/dev/null 2>&1 || true
 fi
 
 if command -v gio >/dev/null 2>&1; then
+    if [ -f "$LAYOUT_BACKUP" ]; then
+        install -m 0755 "$LAYOUT_BACKUP" "$LAYOUT_SCRIPT"
+        echo "已恢复安装前的双屏布局脚本。"
+    fi
     [ ! -e "$APPLICATION_FILE" ] || gio trash "$APPLICATION_FILE"
     if [ -e "$INSTALL_BIN" ] || [ -L "$INSTALL_BIN" ]; then
         gio trash "$INSTALL_BIN"
