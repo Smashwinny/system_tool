@@ -104,6 +104,49 @@ class GuardPolicyTests(unittest.TestCase):
         self.assertEqual(guardian.store.write_incident.call_count, 2)
         self.assertEqual(notifier.call_count, 2)
 
+    def make_kernel_guardian(self):
+        guardian = system_guard.Guardian.__new__(system_guard.Guardian)
+        guardian.config = system_guard.GuardConfig()
+        guardian.store = mock.Mock()
+        guardian.store.write_incident.return_value = Path("/state/report.json")
+        guardian.kernel_last_notified = {}
+        guardian.display_error_since = {}
+        return guardian
+
+    def invalid_head_summary(self, event_time):
+        return [{"fingerprint": "nvrm-invalid-head", "count": 500,
+                 "first_time": event_time, "last_time": event_time,
+                 "message": "NVRM: GPU0 dispcmnCtrlCmdSystemGetVblankCounter_IMPL: invalid head number!"}]
+
+    def test_invalid_head_is_silent_while_locked(self):
+        guardian = self.make_kernel_guardian()
+        with mock.patch.object(system_guard.time, "time", return_value=1000), \
+             mock.patch.object(system_guard, "screen_lock_state", return_value="locked"), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(self.invalid_head_summary(1000))
+        guardian.store.write_incident.assert_not_called()
+        notifier.assert_not_called()
+
+    def test_stale_lock_screen_error_does_not_alert_after_unlock(self):
+        guardian = self.make_kernel_guardian()
+        with mock.patch.object(system_guard.time, "time", side_effect=[1000, 1100]), \
+             mock.patch.object(system_guard, "screen_lock_state", side_effect=["locked", "unlocked"]), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(self.invalid_head_summary(1000))
+            guardian._kernel_incident(self.invalid_head_summary(1000))
+        guardian.store.write_incident.assert_not_called()
+        notifier.assert_not_called()
+
+    def test_invalid_head_alerts_after_sixty_seconds_unlocked(self):
+        guardian = self.make_kernel_guardian()
+        with mock.patch.object(system_guard.time, "time", side_effect=[1000, 1061]), \
+             mock.patch.object(system_guard, "screen_lock_state", return_value="unlocked"), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(self.invalid_head_summary(1000))
+            guardian._kernel_incident(self.invalid_head_summary(1061))
+        guardian.store.write_incident.assert_called_once()
+        notifier.assert_called_once()
+
 
 class IncidentStoreTests(unittest.TestCase):
     def test_writes_report_and_lists_it(self):

@@ -109,4 +109,6 @@ class EventAggregator:
                 self.latest.pop(key, None)
                 continue
             rows.append({"fingerprint": key, "count": len(values), "message": self.latest[key][-180:]})
+            rows[-1]["first_time"] = values[0]
+            rows[-1]["last_time"] = values[-1]
         return sorted(rows, key=lambda row: int(row["count"]), reverse=True)

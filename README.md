@@ -85,6 +85,10 @@ python3 -m unittest discover -s tests -v
 累计。随工具安装的双屏布局脚本会先检查GNOME或logind锁屏状态；锁屏或无法可靠判断
 状态时不会调用 `xrandr`，解锁状态下才保留原有布局修复行为。
 
+NVIDIA 的 `invalid head number` 在锁屏期间归类为显示切换事件：保留在采样历史中，
+但不生成事故报告或桌面警告。解锁后错误停止则自动消退；只有在解锁状态持续产生
+60秒才升级告警。`NVRM Xid`、OOM和其他内核错误不受此静默规则影响。
+
 安装程序会将原有双屏脚本备份到
 `~/.local/share/system-tool/backups/fix-monitor-layout.sh.pre-1.2.1`；运行卸载脚本时会先
 恢复该版本，避免留下不可回退的显示配置变化。

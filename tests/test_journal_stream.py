@@ -14,7 +14,10 @@ class JournalTests(unittest.TestCase):
         aggregate = EventAggregator(window_seconds=60)
         aggregate.add({"time": 100, "fingerprint": "nvrm", "message": "first"})
         aggregate.add({"time": 110, "fingerprint": "nvrm", "message": "second"})
-        self.assertEqual(aggregate.summary(120)[0]["count"], 2)
+        summary = aggregate.summary(120)[0]
+        self.assertEqual(summary["count"], 2)
+        self.assertEqual(summary["first_time"], 100)
+        self.assertEqual(summary["last_time"], 110)
         self.assertEqual(aggregate.summary(171), [])
 
 

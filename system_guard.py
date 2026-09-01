@@ -28,6 +28,7 @@ PROTECTED_TOKENS = (
     "system-tool", "system_guard.py", "systemd", "init", "gnome-shell", "xorg", "gdm",
     "sshd", "gnome-terminal", "ptyxis", "dbus-daemon", "pipewire", "wireplumber",
 )
+INVALID_HEAD_TEXT = "dispcmnctrlcmdsystemgetvblankcounter_impl: invalid head number"
 
 
 @dataclass
@@ -47,6 +48,7 @@ class GuardConfig:
     nvrm_burst_per_minute: int = 10
     log_storm_per_minute: int = 100
     kernel_notification_cooldown_seconds: float = 600.0
+    display_error_unlocked_sustain_seconds: float = 60.0
 
 
 def current_boot_id() -> str:
@@ -191,6 +193,24 @@ def shutil_which(command: str) -> str | None:
     return which(command)
 
 
+def screen_lock_state() -> str:
+    if shutil_which("gdbus"):
+        try:
+            result = subprocess.run(
+                ["gdbus", "call", "--session", "--dest", "org.gnome.ScreenSaver",
+                 "--object-path", "/org/gnome/ScreenSaver", "--method", "org.gnome.ScreenSaver.GetActive"],
+                capture_output=True, text=True, timeout=2, check=False,
+            )
+            if result.returncode == 0:
+                if "true" in result.stdout.lower():
+                    return "locked"
+                if "false" in result.stdout.lower():
+                    return "unlocked"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return "unknown"
+
+
 class Guardian:
     def __init__(self, config: GuardConfig | None = None, store: IncidentStore | None = None,
                  monitor: Monitor | None = None, watcher: JournalWatcher | None = None,
@@ -208,6 +228,7 @@ class Guardian:
         self.critical_since: float | None = None
         self.last_action = -self.config.action_cooldown_seconds
         self.kernel_last_notified: dict[str, float] = {}
+        self.display_error_since: dict[str, float] = {}
         self.ancestry = process_ancestry(os.getpid())
 
     def request_stop(self, *_: object) -> None:
@@ -226,6 +247,17 @@ class Guardian:
             key = str(top["fingerprint"])
             is_xid = "xid" in message.lower()
             is_nvrm = "nvrm" in message.lower()
+            is_invalid_head = INVALID_HEAD_TEXT in message.lower()
+            if is_invalid_head:
+                lock_state = screen_lock_state()
+                last_event = float(top.get("last_time", now))
+                event_is_fresh = now - last_event <= max(15.0, self.config.sample_interval * 2)
+                if lock_state == "locked" or not event_is_fresh:
+                    self.display_error_since.pop(key, None)
+                    continue
+                started = self.display_error_since.setdefault(key, now)
+                if now - started < self.config.display_error_unlocked_sustain_seconds:
+                    continue
             qualifies = (is_xid or (is_nvrm and count >= self.config.nvrm_burst_per_minute) or
                          count >= self.config.log_storm_per_minute)
             if not qualifies:
