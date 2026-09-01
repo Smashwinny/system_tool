@@ -23,7 +23,7 @@ CGROUP = Path("/sys/fs/cgroup")
 ANSI_CLEAR = "\033[2J\033[H"
 ANSI_HIDE = "\033[?25l"
 ANSI_SHOW = "\033[?25h"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 def read_text(path: Path) -> str:
@@ -88,7 +88,8 @@ def parse_vmstat(text: str) -> dict[str, int]:
 def process_group(cmd: str, comm: str, cgroup: str) -> str:
     joined = f"{cmd} {comm} {cgroup}".lower()
     rules = (
-        ("ROS/RViz", ("rviz", "ros2 bag", "eskf_", "rosbag", "mowmow")),
+        ("Build/Compiler", ("cc1plus", "cc1", "clang", "cmake --build", "ninja", "colcon build")),
+        ("ROS/RViz", ("rviz", "ros2 bag", "eskf_", "rosbag", "ros2 launch", "progress_player")),
         ("Chrome", ("google-chrome", "/chrome", "app-gnome-google")),
         ("Cursor", ("/cursor", "app-org.chromium.chromium-350")),
         ("Codex/ChatGPT", ("codex", "chatgpt")),
@@ -660,7 +661,9 @@ def run_watch(args: argparse.Namespace) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="低开销 Linux 卡顿归因工具")
     parser.add_argument("--version", action="version", version=f"system-tool {VERSION}")
-    parser.add_argument("command", nargs="?", choices=("menu", "watch", "status", "clean", "deep-clean"),
+    parser.add_argument("command", nargs="?", choices=("menu", "watch", "status", "clean", "deep-clean",
+                                                   "guard", "guard-enable", "guard-disable", "guard-status",
+                                                   "incidents"),
                         help="不填则打开傻瓜菜单")
     parser.add_argument("--interval", type=float, default=1.0, help="轻量指标刷新秒数，默认 1")
     parser.add_argument("--process-interval", type=float, default=3.0, help="进程扫描间隔，默认 3")
@@ -685,6 +688,9 @@ def main() -> int:
         return run_cleanup(True, args.yes, args.dry_run)
     if args.command == "watch":
         return run_watch(args)
+    if args.command in ("guard", "guard-enable", "guard-disable", "guard-status", "incidents"):
+        from system_guard import run_guard_command
+        return run_guard_command(args.command)
     monitor = Monitor(args.process_interval, args.gpu_interval, args.log_interval,
                       not args.no_gpu, not args.no_logs)
     if args.command == "status" or args.once or args.json:

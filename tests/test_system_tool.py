@@ -28,6 +28,10 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(system_tool.process_group("rviz2 -d view.rviz", "rviz2", ""), "ROS/RViz")
         self.assertEqual(system_tool.process_group("/opt/google/chrome/chrome", "chrome", ""), "Chrome")
 
+    def test_compiler_path_is_not_misclassified_as_ros(self):
+        command = "/usr/lib/gcc/cc1plus /home/hulk/mowmow/src/demo.cpp"
+        self.assertEqual(system_tool.process_group(command, "cc1plus", ""), "Build/Compiler")
+
     def test_diagnose_memory_pressure(self):
         snapshot = {
             "memory": {"available": 100, "total": 1000, "swap_out_per_sec": 30 * 1024 * 1024},

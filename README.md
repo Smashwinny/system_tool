@@ -28,6 +28,10 @@ cd /home/hulk/system_tool
 ```bash
 system-tool status                 # 查询一次CPU、内存、Swap、GPU和卡点
 system-tool watch                  # 动态监控
+system-tool guard-enable           # 启用后台自动止血
+system-tool guard-status           # 查看守卫状态
+system-tool incidents              # 查看自动处置报告
+system-tool guard-disable          # 停止并禁用守卫
 system-tool clean                  # 简单清理，逐项确认
 system-tool deep-clean             # 深度清理，逐项确认
 system-tool deep-clean --dry-run   # 只计算，不删除
@@ -62,3 +66,17 @@ python3 -m unittest discover -s tests -v
 ```
 
 支持 Linux cgroup v2。无 NVIDIA GPU或无日志权限时会自动降级。
+
+## 后台自动止血
+
+运行 `system-tool guard-enable` 后，用户级 systemd 服务会在后台低频采样。只有同时满足
+“可用内存极低”和“PSI或Swap-out持续处于临界状态”45秒，才会按当前RSS选择最大的
+用户程序组。历史Swap占用不会被当作选择杀除对象的主要依据。
+它先发送 `SIGTERM`，等待10秒；只有压力仍未恢复时才发送 `SIGKILL`。
+
+桌面、终端、systemd、SSH、Codex/ChatGPT和守卫自身受到保护。每次动作都会显示桌面
+通知，并把进程、原因、动作及前后内存写入
+`~/.local/state/system-tool/incidents/`。同类自动动作至少间隔10分钟。GPU或内核日志
+风暴只告警和留证，不会在无法可靠归因时随意杀进程。
+
+守卫不会执行 `swapoff`、清空页缓存或自动重启电脑。卸载工具时故障报告默认保留。

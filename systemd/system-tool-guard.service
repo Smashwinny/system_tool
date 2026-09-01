@@ -1,0 +1,15 @@
+[Unit]
+Description=system-tool memory pressure guard
+Documentation=file://%h/.local/share/system-tool/docs/freeze-prevention-design.md
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/system-tool guard
+Restart=on-failure
+RestartSec=5s
+CPUQuota=10%
+MemoryMax=128M
+
+[Install]
+WantedBy=default.target
