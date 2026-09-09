@@ -26,6 +26,11 @@ class JournalTests(unittest.TestCase):
                    "ubuntu-appindicators@ubuntu.com/dbusMenu.js:520")
         self.assertIsNotNone(ALERT_PATTERN.search(message))
 
+    def test_wechat_wxid_path_is_not_nvidia_xid(self):
+        message = ("Could not get mimetype for "
+                   "/home/hulk/Documents/xwechat_files/wxid_example/ImageTemp/file")
+        self.assertIsNone(ALERT_PATTERN.search(message))
+
 
 if __name__ == "__main__":
     unittest.main()

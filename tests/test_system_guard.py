@@ -140,6 +140,16 @@ class GuardPolicyTests(unittest.TestCase):
         self.assertEqual(guardian.store.write_incident.call_count, 2)
         self.assertEqual(notifier.call_count, 2)
 
+    def test_wechat_wxid_is_not_treated_as_gpu_xid(self):
+        guardian = self.make_kernel_guardian()
+        summary = [{"fingerprint": "wechat-temp", "count": 1,
+                    "message": "missing /xwechat_files/wxid_example/ImageTemp/file"}]
+        with mock.patch.object(system_guard.time, "time", return_value=1000), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(summary)
+        guardian.store.write_incident.assert_not_called()
+        notifier.assert_not_called()
+
     def make_kernel_guardian(self):
         guardian = system_guard.Guardian.__new__(system_guard.Guardian)
         guardian.config = system_guard.GuardConfig()

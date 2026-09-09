@@ -14,7 +14,7 @@ from typing import Any
 
 
 ALERT_PATTERN = re.compile(
-    r"oom|out of memory|killed process|nvrm|xid|thermal|i/o error|ext4-fs error|"
+    r"\boom\b|out of memory|killed process|\bnvrm\b|\bxid\b|thermal|i/o error|ext4-fs error|"
     r"js error: too much recursion|ubuntu-appindicators@ubuntu\.com/dbusmenu\.js",
     re.I,
 )

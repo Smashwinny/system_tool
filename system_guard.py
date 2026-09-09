@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -280,8 +281,9 @@ class Guardian:
             message = str(top["message"])
             count = int(top["count"])
             key = str(top["fingerprint"])
-            is_xid = "xid" in message.lower()
-            is_nvrm = "nvrm" in message.lower()
+            lowered = message.lower()
+            is_nvrm = bool(re.search(r"\bnvrm\b", lowered))
+            is_xid = bool(re.search(r"\bnvrm\b.*\bxid\b|\bxid\s*[:(]", lowered))
             is_invalid_head = INVALID_HEAD_TEXT in message.lower()
             if is_invalid_head:
                 lock_state = screen_lock_state()
