@@ -1,0 +1,15 @@
+[Unit]
+Description=Repair monitor layout on DRM hotplug or screen unlock
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:1
+ExecStart=%h/.local/share/system-tool/monitor_hotplug.py
+Restart=on-failure
+RestartSec=5s
+CPUQuota=2%
+MemoryMax=32M
+
+[Install]
+WantedBy=default.target

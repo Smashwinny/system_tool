@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +30,7 @@ PROTECTED_TOKENS = (
     "sshd", "gnome-terminal", "ptyxis", "dbus-daemon", "pipewire", "wireplumber",
 )
 INVALID_HEAD_TEXT = "dispcmnctrlcmdsystemgetvblankcounter_impl: invalid head number"
+APPINDICATOR_RECURSION_TEXT = "js error: too much recursion"
 
 
 @dataclass
@@ -49,6 +51,10 @@ class GuardConfig:
     log_storm_per_minute: int = 100
     kernel_notification_cooldown_seconds: float = 600.0
     display_error_unlocked_sustain_seconds: float = 60.0
+    desktop_growth_window_seconds: float = 60.0
+    desktop_growth_bytes: int = 768 * MIB
+    desktop_growth_floor_bytes: int = 2 * GIB
+    desktop_action_cooldown_seconds: float = 1800.0
 
 
 def current_boot_id() -> str:
@@ -211,6 +217,29 @@ def screen_lock_state() -> str:
     return "unknown"
 
 
+def gnome_shell_rss(processes: list[ProcessRow]) -> int:
+    return sum(row.rss for row in processes
+               if row.command.split(" ", 1)[0].endswith("/gnome-shell") or row.command == "gnome-shell")
+
+
+def previous_boot_was_unclean(store: IncidentStore, boot_id: str) -> dict[str, Any] | None:
+    heartbeat = store.read_marker("heartbeat.json")
+    clean = store.read_marker("clean-exit.json")
+    if not heartbeat or heartbeat.get("boot_id") == boot_id:
+        return None
+    heartbeat_epoch = float(heartbeat.get("epoch", 0))
+    clean_epoch = float(clean.get("epoch", 0)) if clean else 0.0
+    if clean_epoch >= heartbeat_epoch:
+        return None
+    return {
+        "kind": "unclean-reboot",
+        "timestamp": time.strftime("%F %T"),
+        "previous_heartbeat": heartbeat,
+        "previous_clean_exit": clean,
+        "automatic_action": "none",
+    }
+
+
 class Guardian:
     def __init__(self, config: GuardConfig | None = None, store: IncidentStore | None = None,
                  monitor: Monitor | None = None, watcher: JournalWatcher | None = None,
@@ -229,7 +258,13 @@ class Guardian:
         self.last_action = -self.config.action_cooldown_seconds
         self.kernel_last_notified: dict[str, float] = {}
         self.display_error_since: dict[str, float] = {}
+        self.desktop_history: deque[tuple[float, int]] = deque()
+        self.last_desktop_action = -self.config.desktop_action_cooldown_seconds
         self.ancestry = process_ancestry(os.getpid())
+        unclean = previous_boot_was_unclean(self.store, current_boot_id())
+        if unclean:
+            path = self.store.write_incident(unclean)
+            notify("system-tool：检测到非正常重启", f"已保留上次心跳，报告：{path}")
 
     def request_stop(self, *_: object) -> None:
         self.stop_requested = True
@@ -272,6 +307,47 @@ class Guardian:
             path = self.store.write_incident(payload)
             notify("system-tool：内核异常", f"{message[-120:]}\n报告：{path}")
             self.kernel_last_notified[key] = now
+
+    def _disable_appindicator(self, reason: str, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+        now = self.clock()
+        if now - self.last_desktop_action < self.config.desktop_action_cooldown_seconds:
+            return None
+        command = ["gnome-extensions", "disable", "ubuntu-appindicators@ubuntu.com"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
+            success = result.returncode == 0
+            error = result.stderr[-500:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            success, error = False, str(exc)
+        payload = {
+            "kind": "desktop-recursion-relief", "timestamp": time.strftime("%F %T"),
+            "reason": reason, "gnome_shell_rss": gnome_shell_rss(self.monitor.processes),
+            "available_before": snapshot["memory"]["available"],
+            "automatic_action": "disable ubuntu-appindicators extension",
+            "action_succeeded": success, "error": error,
+        }
+        path = self.store.write_incident(payload)
+        self.last_desktop_action = now
+        title = "system-tool：已阻止桌面递归" if success else "system-tool：桌面递归止血失败"
+        notify(title, f"{'已临时停用托盘扩展' if success else error}\n报告：{path}")
+        return payload
+
+    def _desktop_risk(self, snapshot: dict[str, Any], summary: list[dict[str, Any]]) -> str | None:
+        for event in summary:
+            message = str(event.get("message", "")).lower()
+            if APPINDICATOR_RECURSION_TEXT in message and "ubuntu-appindicators" in message:
+                return "GNOME Shell AppIndicators reported recursive menu creation"
+        now = self.clock()
+        rss = gnome_shell_rss(self.monitor.processes)
+        self.desktop_history.append((now, rss))
+        cutoff = now - self.config.desktop_growth_window_seconds
+        while len(self.desktop_history) > 1 and self.desktop_history[1][0] <= cutoff:
+            self.desktop_history.popleft()
+        oldest_rss = self.desktop_history[0][1]
+        if rss >= self.config.desktop_growth_floor_bytes and rss - oldest_rss >= self.config.desktop_growth_bytes:
+            return (f"gnome-shell RSS grew {human_bytes(rss - oldest_rss)} in "
+                    f"{now - self.desktop_history[0][0]:.0f}s (now {human_bytes(rss)})")
+        return None
 
     def _act(self, snapshot: dict[str, Any], reason: str) -> dict[str, Any] | None:
         selected = select_offender(self.monitor.processes, self.config.offender_min_bytes,
@@ -333,6 +409,9 @@ class Guardian:
                 self.store.heartbeat({"timestamp": time.strftime("%F %T"), "epoch": time.time(),
                                       "boot_id": current_boot_id(), "state": state, "pid": os.getpid()})
                 self._kernel_incident(summary)
+                desktop_reason = self._desktop_risk(snapshot, summary)
+                if desktop_reason:
+                    self._disable_appindicator(desktop_reason, snapshot)
                 if (state == "critical" and started - self.last_action >= self.config.action_cooldown_seconds):
                     if self._act(snapshot, detail):
                         self.last_action = self.clock()

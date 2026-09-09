@@ -19,16 +19,21 @@ install -m 0755 "$SOURCE_ROOT/system_tool.py" "$INSTALL_LIB/system_tool.py"
 install -m 0644 "$SOURCE_ROOT/system_guard.py" "$INSTALL_LIB/system_guard.py"
 install -m 0644 "$SOURCE_ROOT/incident_store.py" "$INSTALL_LIB/incident_store.py"
 install -m 0644 "$SOURCE_ROOT/journal_stream.py" "$INSTALL_LIB/journal_stream.py"
+install -m 0755 "$SOURCE_ROOT/monitor_hotplug.py" "$INSTALL_LIB/monitor_hotplug.py"
 install -m 0755 "$SOURCE_ROOT/fix-monitor-layout.sh" "$LAYOUT_STAGED"
 mv -f "$LAYOUT_STAGED" "$LAYOUT_SCRIPT"
 mkdir -p "$INSTALL_LIB/docs"
 install -m 0644 "$SOURCE_ROOT/docs/freeze-prevention-design.md" "$INSTALL_LIB/docs/freeze-prevention-design.md"
 install -m 0644 "$SOURCE_ROOT/systemd/system-tool-guard.service" "$USER_UNIT_DIR/system-tool-guard.service"
+install -m 0644 "$SOURCE_ROOT/systemd/system-tool-monitor-hotplug.service" "$USER_UNIT_DIR/system-tool-monitor-hotplug.service"
 ln -sfn "$INSTALL_LIB/system_tool.py" "$INSTALL_BIN/system-tool"
 sed "s|@EXEC@|$INSTALL_BIN/system-tool|g" "$SOURCE_ROOT/system-tool.desktop.in" > "$APPLICATION_DIR/system-tool.desktop"
 chmod 0644 "$APPLICATION_DIR/system-tool.desktop"
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload || true
+    systemctl --user disable --now fix-monitor-layout.timer 2>/dev/null || true
+    systemctl --user enable --now system-tool-monitor-hotplug.service || true
+    systemctl --user try-restart system-tool-guard.service || true
 fi
 
 echo "安装完成。"

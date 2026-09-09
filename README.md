@@ -89,6 +89,11 @@ NVIDIA 的 `invalid head number` 在锁屏期间归类为显示切换事件：�
 但不生成事故报告或桌面警告。解锁后错误停止则自动消退；只有在解锁状态持续产生
 60秒才升级告警。`NVRM Xid`、OOM和其他内核错误不受此静默规则影响。
 
+双屏排版不再每5秒调用 `xrandr`。`system-tool-monitor-hotplug.service` 常驻等待 DRM
+热插拔或屏幕解锁事件，防抖后才检查一次布局；启动时也检查一次，因此仍会保持外屏
+在左、内屏在右且内屏为主屏。守卫同时检查 GNOME Shell 的 AppIndicators 递归和
+一分钟内异常内存增长；命中时只临时停用托盘扩展并保存报告，不结束桌面会话。
+
 安装程序会将原有双屏脚本备份到
 `~/.local/share/system-tool/backups/fix-monitor-layout.sh.pre-1.2.1`；运行卸载脚本时会先
 恢复该版本，避免留下不可回退的显示配置变化。

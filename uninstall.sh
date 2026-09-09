@@ -5,11 +5,13 @@ INSTALL_LIB="${XDG_DATA_HOME:-$HOME/.local/share}/system-tool"
 INSTALL_BIN="$HOME/.local/bin/system-tool"
 APPLICATION_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/system-tool.desktop"
 USER_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/system-tool-guard.service"
+HOTPLUG_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/system-tool-monitor-hotplug.service"
 LAYOUT_SCRIPT="$HOME/.local/bin/fix-monitor-layout.sh"
 LAYOUT_BACKUP="$INSTALL_LIB/backups/fix-monitor-layout.sh.pre-1.2.1"
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user disable --now system-tool-guard.service >/dev/null 2>&1 || true
+    systemctl --user disable --now system-tool-monitor-hotplug.service >/dev/null 2>&1 || true
 fi
 
 if command -v gio >/dev/null 2>&1; then
@@ -23,6 +25,7 @@ if command -v gio >/dev/null 2>&1; then
     fi
     [ ! -e "$INSTALL_LIB" ] || gio trash "$INSTALL_LIB"
     [ ! -e "$USER_UNIT" ] || gio trash "$USER_UNIT"
+    [ ! -e "$HOTPLUG_UNIT" ] || gio trash "$HOTPLUG_UNIT"
     if command -v systemctl >/dev/null 2>&1; then
         systemctl --user daemon-reload >/dev/null 2>&1 || true
     fi

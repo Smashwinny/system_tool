@@ -44,6 +44,15 @@ class IncidentStore:
     def mark_clean_exit(self, payload: dict[str, Any]) -> None:
         self._atomic_json(self.root / "clean-exit.json", payload)
 
+    def read_marker(self, name: str) -> dict[str, Any] | None:
+        if name not in {"heartbeat.json", "clean-exit.json"}:
+            raise ValueError("unsupported marker")
+        try:
+            value = json.loads((self.root / name).read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else None
+        except (OSError, ValueError, TypeError):
+            return None
+
     def append_sample(self, payload: dict[str, Any]) -> None:
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
         if self.sample_path.exists() and self.sample_path.stat().st_size + len(encoded.encode()) > self.max_sample_bytes:

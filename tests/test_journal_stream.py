@@ -1,6 +1,6 @@
 import unittest
 
-from journal_stream import EventAggregator, fingerprint
+from journal_stream import ALERT_PATTERN, EventAggregator, fingerprint
 
 
 class JournalTests(unittest.TestCase):
@@ -19,6 +19,12 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(summary["first_time"], 100)
         self.assertEqual(summary["last_time"], 110)
         self.assertEqual(aggregate.summary(171), [])
+
+    def test_detects_gnome_shell_recursion(self):
+        message = ("JS ERROR: too much recursion\n"
+                   "createItem@/usr/share/gnome-shell/extensions/"
+                   "ubuntu-appindicators@ubuntu.com/dbusMenu.js:520")
+        self.assertIsNotNone(ALERT_PATTERN.search(message))
 
 
 if __name__ == "__main__":

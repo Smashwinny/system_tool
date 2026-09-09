@@ -88,6 +88,42 @@ class GuardPolicyTests(unittest.TestCase):
         self.assertIn("group-29", compact["groups"])
         self.assertNotIn("group-0", compact["groups"])
 
+    def test_gnome_shell_rss_does_not_use_whole_desktop_group(self):
+        rows = [
+            ProcessRow(10, "Desktop", "/usr/bin/gnome-shell", 0, 3 * system_guard.GIB, 0, "R"),
+            ProcessRow(11, "Desktop", "/usr/lib/xorg/Xorg", 0, system_guard.GIB, 0, "S"),
+        ]
+        self.assertEqual(system_guard.gnome_shell_rss(rows), 3 * system_guard.GIB)
+
+    def test_previous_boot_detects_stale_clean_exit(self):
+        store = mock.Mock()
+        store.read_marker.side_effect = [
+            {"boot_id": "old", "epoch": 200, "state": "normal"},
+            {"boot_id": "old", "epoch": 100},
+        ]
+        result = system_guard.previous_boot_was_unclean(store, "new")
+        self.assertEqual(result["kind"], "unclean-reboot")
+
+    def test_previous_boot_accepts_clean_exit_after_heartbeat(self):
+        store = mock.Mock()
+        store.read_marker.side_effect = [
+            {"boot_id": "old", "epoch": 200}, {"boot_id": "old", "epoch": 201},
+        ]
+        self.assertIsNone(system_guard.previous_boot_was_unclean(store, "new"))
+
+    def test_desktop_growth_triggers_before_global_pressure_threshold(self):
+        guardian = system_guard.Guardian.__new__(system_guard.Guardian)
+        guardian.config = system_guard.GuardConfig()
+        guardian.monitor = mock.Mock()
+        guardian.desktop_history = system_guard.deque()
+        guardian.clock = mock.Mock(side_effect=[1000, 1060])
+        guardian.monitor.processes = [
+            ProcessRow(10, "Desktop", "/usr/bin/gnome-shell", 0, 2 * system_guard.GIB, 0, "R")]
+        self.assertIsNone(guardian._desktop_risk({}, []))
+        guardian.monitor.processes = [
+            ProcessRow(10, "Desktop", "/usr/bin/gnome-shell", 0, 3 * system_guard.GIB, 0, "R")]
+        self.assertIn("grew", guardian._desktop_risk({}, []))
+
     def test_kernel_notification_is_deduplicated_during_cooldown(self):
         guardian = system_guard.Guardian.__new__(system_guard.Guardian)
         guardian.config = system_guard.GuardConfig(kernel_notification_cooldown_seconds=600)

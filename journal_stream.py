@@ -13,7 +13,11 @@ from collections import defaultdict, deque
 from typing import Any
 
 
-ALERT_PATTERN = re.compile(r"oom|out of memory|killed process|nvrm|xid|thermal|i/o error|ext4-fs error", re.I)
+ALERT_PATTERN = re.compile(
+    r"oom|out of memory|killed process|nvrm|xid|thermal|i/o error|ext4-fs error|"
+    r"js error: too much recursion|ubuntu-appindicators@ubuntu\.com/dbusmenu\.js",
+    re.I,
+)
 
 
 def fingerprint(message: str) -> str:
@@ -49,7 +53,9 @@ class JournalWatcher:
         while not self.stop_event.is_set():
             try:
                 self.process = subprocess.Popen(
-                    ["journalctl", "-k", "-f", "-n", "0", "-o", "json", "--no-pager"],
+                    # GNOME Shell failures live in the user-session journal, so restricting
+                    # this stream to kernel messages made the guard blind to desktop loops.
+                    ["journalctl", "-f", "-n", "0", "-o", "json", "--no-pager"],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                 )
                 assert self.process.stdout is not None
@@ -63,7 +69,11 @@ class JournalWatcher:
                         continue
                     if not ALERT_PATTERN.search(message):
                         continue
-                    event = {"time": time.time(), "message": message[-500:], "fingerprint": fingerprint(message)}
+                    if "too much recursion" in message.lower():
+                        message = message[:1000]
+                    else:
+                        message = message[-500:]
+                    event = {"time": time.time(), "message": message, "fingerprint": fingerprint(message)}
                     try:
                         self.events.put_nowait(event)
                     except queue.Full:
