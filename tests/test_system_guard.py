@@ -124,14 +124,31 @@ class GuardPolicyTests(unittest.TestCase):
             ProcessRow(10, "Desktop", "/usr/bin/gnome-shell", 0, 3 * system_guard.GIB, 0, "R")]
         self.assertIn("grew", guardian._desktop_risk({}, []))
 
+    def test_stage_view_storm_triggers_graphics_protection(self):
+        guardian = system_guard.Guardian.__new__(system_guard.Guardian)
+        guardian.config = system_guard.GuardConfig()
+        guardian.graphics_pressure_since = None
+        guardian.clock = mock.Mock(return_value=1000)
+        summary = [{"message": "Can't update stage views actor", "count": 6}]
+        self.assertIn("stage-view", guardian._graphics_risk({"blocked": [], "io_psi": {}}, summary))
+
+    def test_graphics_pressure_requires_sustained_io_and_blocked_graphics_task(self):
+        guardian = system_guard.Guardian.__new__(system_guard.Guardian)
+        guardian.config = system_guard.GuardConfig(graphics_sustain_seconds=15)
+        guardian.graphics_pressure_since = None
+        guardian.clock = mock.Mock(side_effect=[1000, 1016])
+        snapshot = {"io_psi": {"full_avg10": 20}, "blocked": [{"command": "kworker+i915_flip"}]}
+        self.assertIsNone(guardian._graphics_risk(snapshot, []))
+        self.assertIn("blocked", guardian._graphics_risk(snapshot, []))
+
     def test_kernel_notification_is_deduplicated_during_cooldown(self):
         guardian = system_guard.Guardian.__new__(system_guard.Guardian)
         guardian.config = system_guard.GuardConfig(kernel_notification_cooldown_seconds=600)
         guardian.store = mock.Mock()
         guardian.store.write_incident.return_value = Path("/state/report.json")
         guardian.kernel_last_notified = {}
-        summary = [{"fingerprint": "nvrm-invalid-head", "count": 500,
-                    "message": "NVRM: invalid head number"}]
+        summary = [{"fingerprint": "nvrm-xid", "count": 1,
+                    "message": "NVRM: Xid (PCI:0000:01:00): 79"}]
         with mock.patch.object(system_guard.time, "time", side_effect=[1000, 1100, 1701]), \
              mock.patch.object(system_guard, "notify") as notifier:
             guardian._kernel_incident(summary)
@@ -148,6 +165,16 @@ class GuardPolicyTests(unittest.TestCase):
              mock.patch.object(system_guard, "notify") as notifier:
             guardian._kernel_incident(summary)
         guardian.store.write_incident.assert_not_called()
+        notifier.assert_not_called()
+
+    def test_non_actionable_kernel_event_records_without_popup(self):
+        guardian = self.make_kernel_guardian()
+        summary = [{"fingerprint": "oom", "count": 100,
+                    "message": "out of memory warning"}]
+        with mock.patch.object(system_guard.time, "time", return_value=1000), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(summary)
+        guardian.store.write_incident.assert_called_once()
         notifier.assert_not_called()
 
     def make_kernel_guardian(self):
@@ -191,6 +218,7 @@ class GuardPolicyTests(unittest.TestCase):
             guardian._kernel_incident(self.invalid_head_summary(1000))
             guardian._kernel_incident(self.invalid_head_summary(1061))
         guardian.store.write_incident.assert_called_once()
+        guardian.store.set_display_cooldown.assert_called_once()
         notifier.assert_called_once()
 
 
@@ -209,6 +237,14 @@ class IncidentStoreTests(unittest.TestCase):
             store.append_sample({"value": "b" * 30})
             self.assertTrue(store.sample_path.exists())
             self.assertTrue(store.sample_path.with_suffix(".jsonl.1").exists())
+
+    def test_display_cooldown_is_written_atomically(self):
+        with TemporaryDirectory() as temp:
+            store = IncidentStore(Path(temp))
+            store.set_display_cooldown(1234, "test")
+            payload = system_guard.json.loads(
+                (Path(temp) / "display-cooldown.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["until_epoch"], 1234)
 
 
 if __name__ == "__main__":

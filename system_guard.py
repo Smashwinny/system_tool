@@ -32,6 +32,7 @@ PROTECTED_TOKENS = (
 )
 INVALID_HEAD_TEXT = "dispcmnctrlcmdsystemgetvblankcounter_impl: invalid head number"
 APPINDICATOR_RECURSION_TEXT = "js error: too much recursion"
+STAGE_VIEW_ERROR_TEXT = "can't update stage views"
 
 
 @dataclass
@@ -56,6 +57,10 @@ class GuardConfig:
     desktop_growth_bytes: int = 768 * MIB
     desktop_growth_floor_bytes: int = 2 * GIB
     desktop_action_cooldown_seconds: float = 1800.0
+    display_cooldown_seconds: float = 600.0
+    stage_view_storm_per_minute: int = 6
+    graphics_io_full_psi: float = 10.0
+    graphics_sustain_seconds: float = 15.0
 
 
 def current_boot_id() -> str:
@@ -261,11 +266,12 @@ class Guardian:
         self.display_error_since: dict[str, float] = {}
         self.desktop_history: deque[tuple[float, int]] = deque()
         self.last_desktop_action = -self.config.desktop_action_cooldown_seconds
+        self.graphics_pressure_since: float | None = None
+        self.last_graphics_action = -self.config.display_cooldown_seconds
         self.ancestry = process_ancestry(os.getpid())
         unclean = previous_boot_was_unclean(self.store, current_boot_id())
         if unclean:
-            path = self.store.write_incident(unclean)
-            notify("system-tool：检测到非正常重启", f"已保留上次心跳，报告：{path}")
+            self.store.write_incident(unclean)
 
     def request_stop(self, *_: object) -> None:
         self.stop_requested = True
@@ -302,12 +308,20 @@ class Guardian:
             last_notified = self.kernel_last_notified.get(key, float("-inf"))
             if now - last_notified < self.config.kernel_notification_cooldown_seconds:
                 continue
+            automatic_action = "none"
+            if is_invalid_head or is_xid:
+                self.store.set_display_cooldown(
+                    now + self.config.display_cooldown_seconds,
+                    "sustained NVIDIA invalid-head storm" if is_invalid_head else "NVIDIA Xid")
+                automatic_action = "suppress layout checks temporarily"
             payload = {"kind": "kernel-alert", "timestamp": time.strftime("%F %T"),
                        "fingerprint": key, "count_per_minute": count, "message": message,
                        "notification_cooldown_seconds": self.config.kernel_notification_cooldown_seconds,
-                       "automatic_action": "none"}
+                       "automatic_action": automatic_action}
             path = self.store.write_incident(payload)
-            notify("system-tool：内核异常", f"{message[-120:]}\n报告：{path}")
+            if automatic_action != "none":
+                notify("system-tool：已执行显示保护",
+                       f"已暂停自动布局检查10分钟，当前排版不变。\n原因：{message[-100:]}\n报告：{path}")
             self.kernel_last_notified[key] = now
 
     def _disable_appindicator(self, reason: str, snapshot: dict[str, Any]) -> dict[str, Any] | None:
@@ -351,6 +365,43 @@ class Guardian:
                     f"{now - self.desktop_history[0][0]:.0f}s (now {human_bytes(rss)})")
         return None
 
+    def _graphics_risk(self, snapshot: dict[str, Any], summary: list[dict[str, Any]]) -> str | None:
+        for event in summary:
+            if (STAGE_VIEW_ERROR_TEXT in str(event.get("message", "")).lower() and
+                    int(event.get("count", 0)) >= self.config.stage_view_storm_per_minute):
+                return f"GNOME Shell stage-view failures: {event['count']}/minute"
+        blocked = snapshot.get("blocked", [])
+        graphics_blocked = any(
+            "xorg" in str(row.get("command", "")).lower() or
+            "i915_flip" in str(row.get("command", "")).lower()
+            for row in blocked)
+        io_full = float(snapshot.get("io_psi", {}).get("full_avg10", 0))
+        now = self.clock()
+        if graphics_blocked and io_full >= self.config.graphics_io_full_psi:
+            self.graphics_pressure_since = self.graphics_pressure_since or now
+            if now - self.graphics_pressure_since >= self.config.graphics_sustain_seconds:
+                return f"graphics task blocked with I/O PSI full {io_full:.1f}%"
+        else:
+            self.graphics_pressure_since = None
+        return None
+
+    def _suppress_layout_checks(self, reason: str, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+        now = self.clock()
+        if now - self.last_graphics_action < self.config.display_cooldown_seconds:
+            return None
+        until = time.time() + self.config.display_cooldown_seconds
+        self.store.set_display_cooldown(until, reason)
+        payload = {
+            "kind": "graphics-relief", "timestamp": time.strftime("%F %T"), "reason": reason,
+            "io_psi": snapshot.get("io_psi", {}), "blocked": snapshot.get("blocked", [])[:5],
+            "automatic_action": "suppress layout checks temporarily",
+            "cooldown_until_epoch": until,
+        }
+        path = self.store.write_incident(payload)
+        self.last_graphics_action = now
+        notify("system-tool：已保护图形界面", f"已暂停布局检查10分钟，不影响当前排版。\n报告：{path}")
+        return payload
+
     def _act(self, snapshot: dict[str, Any], reason: str) -> dict[str, Any] | None:
         selected = select_offender(self.monitor.processes, self.config.offender_min_bytes,
                                    ancestry=self.ancestry)
@@ -363,7 +414,6 @@ class Guardian:
         descriptions = [{"pid": row.pid, "command": row.command[:300], "rss": row.rss, "swap": row.swap}
                         for row in sorted(rows, key=lambda item: item.rss + item.swap, reverse=True)[:20]]
         term_sent = signal_targets(targets, signal.SIGTERM)
-        notify("system-tool：正在自动止血", f"{group} 当前RAM {human_bytes(total_rss)}，已请求退出。")
         self.sleeper(self.config.term_grace_seconds)
         remaining = {pid for pid in targets if Path("/proc", str(pid)).exists()}
         current_mem = parse_meminfo(read_text(Path("/proc/meminfo")))
@@ -386,7 +436,8 @@ class Guardian:
         }
         path = self.store.write_incident(payload)
         action = "强制结束" if kill_sent else "正常退出"
-        notify("system-tool：自动止血完成", f"{group} 已{action}。报告：{path}")
+        notify("system-tool：自动止血完成",
+               f"处理：{group} 已{action}；没有删除文件。\n报告：{path}")
         return payload
 
     def run(self) -> int:
@@ -414,6 +465,9 @@ class Guardian:
                 desktop_reason = self._desktop_risk(snapshot, summary)
                 if desktop_reason:
                     self._disable_appindicator(desktop_reason, snapshot)
+                graphics_reason = self._graphics_risk(snapshot, summary)
+                if graphics_reason:
+                    self._suppress_layout_checks(graphics_reason, snapshot)
                 if (state == "critical" and started - self.last_action >= self.config.action_cooldown_seconds):
                     if self._act(snapshot, detail):
                         self.last_action = self.clock()

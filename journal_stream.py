@@ -15,7 +15,8 @@ from typing import Any
 
 ALERT_PATTERN = re.compile(
     r"\boom\b|out of memory|killed process|\bnvrm\b|\bxid\b|thermal|i/o error|ext4-fs error|"
-    r"js error: too much recursion|ubuntu-appindicators@ubuntu\.com/dbusmenu\.js",
+    r"js error: too much recursion|ubuntu-appindicators@ubuntu\.com/dbusmenu\.js|"
+    r"can't update stage views",
     re.I,
 )
 
@@ -69,8 +70,10 @@ class JournalWatcher:
                         continue
                     if not ALERT_PATTERN.search(message):
                         continue
-                    if "too much recursion" in message.lower():
-                        message = message[:1000]
+                    if ("too much recursion" in message.lower() and
+                            "ubuntu-appindicators@ubuntu.com/dbusmenu.js" in message.lower()):
+                        message = ("JS ERROR: too much recursion "
+                                   "ubuntu-appindicators@ubuntu.com/dbusMenu.js")
                     else:
                         message = message[-500:]
                     event = {"time": time.time(), "message": message, "fingerprint": fingerprint(message)}

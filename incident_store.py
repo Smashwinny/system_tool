@@ -44,6 +44,11 @@ class IncidentStore:
     def mark_clean_exit(self, payload: dict[str, Any]) -> None:
         self._atomic_json(self.root / "clean-exit.json", payload)
 
+    def set_display_cooldown(self, until_epoch: float, reason: str) -> None:
+        self._atomic_json(self.root / "display-cooldown.json", {
+            "until_epoch": until_epoch, "reason": reason, "timestamp": time.strftime("%F %T"),
+        })
+
     def read_marker(self, name: str) -> dict[str, Any] | None:
         if name not in {"heartbeat.json", "clean-exit.json"}:
             raise ValueError("unsupported marker")

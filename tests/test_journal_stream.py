@@ -31,6 +31,9 @@ class JournalTests(unittest.TestCase):
                    "/home/hulk/Documents/xwechat_files/wxid_example/ImageTemp/file")
         self.assertIsNone(ALERT_PATTERN.search(message))
 
+    def test_detects_gnome_stage_view_failure(self):
+        self.assertIsNotNone(ALERT_PATTERN.search("Can't update stage views actor window"))
+
 
 if __name__ == "__main__":
     unittest.main()

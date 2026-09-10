@@ -23,7 +23,7 @@ CGROUP = Path("/sys/fs/cgroup")
 ANSI_CLEAR = "\033[2J\033[H"
 ANSI_HIDE = "\033[?25l"
 ANSI_SHOW = "\033[?25h"
-VERSION = "1.3.0"
+VERSION = "1.3.2"
 
 
 def read_text(path: Path) -> str:
