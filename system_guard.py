@@ -318,10 +318,7 @@ class Guardian:
                        "fingerprint": key, "count_per_minute": count, "message": message,
                        "notification_cooldown_seconds": self.config.kernel_notification_cooldown_seconds,
                        "automatic_action": automatic_action}
-            path = self.store.write_incident(payload)
-            if automatic_action != "none":
-                notify("system-tool：已执行显示保护",
-                       f"已暂停自动布局检查10分钟，当前排版不变。\n原因：{message[-100:]}\n报告：{path}")
+            self.store.write_incident(payload)
             self.kernel_last_notified[key] = now
 
     def _disable_appindicator(self, reason: str, snapshot: dict[str, Any]) -> dict[str, Any] | None:
@@ -397,9 +394,8 @@ class Guardian:
             "automatic_action": "suppress layout checks temporarily",
             "cooldown_until_epoch": until,
         }
-        path = self.store.write_incident(payload)
+        self.store.write_incident(payload)
         self.last_graphics_action = now
-        notify("system-tool：已保护图形界面", f"已暂停布局检查10分钟，不影响当前排版。\n报告：{path}")
         return payload
 
     def _act(self, snapshot: dict[str, Any], reason: str) -> dict[str, Any] | None:

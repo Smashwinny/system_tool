@@ -141,7 +141,7 @@ class GuardPolicyTests(unittest.TestCase):
         self.assertIsNone(guardian._graphics_risk(snapshot, []))
         self.assertIn("blocked", guardian._graphics_risk(snapshot, []))
 
-    def test_kernel_notification_is_deduplicated_during_cooldown(self):
+    def test_kernel_report_is_deduplicated_and_display_cooldown_is_silent(self):
         guardian = system_guard.Guardian.__new__(system_guard.Guardian)
         guardian.config = system_guard.GuardConfig(kernel_notification_cooldown_seconds=600)
         guardian.store = mock.Mock()
@@ -155,7 +155,7 @@ class GuardPolicyTests(unittest.TestCase):
             guardian._kernel_incident(summary)
             guardian._kernel_incident(summary)
         self.assertEqual(guardian.store.write_incident.call_count, 2)
-        self.assertEqual(notifier.call_count, 2)
+        notifier.assert_not_called()
 
     def test_wechat_wxid_is_not_treated_as_gpu_xid(self):
         guardian = self.make_kernel_guardian()
@@ -219,7 +219,7 @@ class GuardPolicyTests(unittest.TestCase):
             guardian._kernel_incident(self.invalid_head_summary(1061))
         guardian.store.write_incident.assert_called_once()
         guardian.store.set_display_cooldown.assert_called_once()
-        notifier.assert_called_once()
+        notifier.assert_not_called()
 
 
 class IncidentStoreTests(unittest.TestCase):
