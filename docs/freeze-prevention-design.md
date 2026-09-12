@@ -157,6 +157,12 @@
 桌面、终端、systemd、SSH、Codex/ChatGPT和守卫自身不可作为候选。Chrome、Cursor、
 ROS或编译任务只有在成为最大合格候选时才会被处理，并生成报告与桌面通知。
 
+换页风暴专项例外：可用内存低于2 GiB且swap-out至少80 MiB/s时，只检查明确的
+Gradle/编译器进程。如果这些进程一分钟内RSS增长至少
+768 MiB且总计达到3 GiB，先静默降低其CPU和I/O优先级；压力连续15秒仍不恢复，才向
+精确进程树发送SIGTERM并通知。普通Java、Chrome、Cursor、Codex和桌面不适用该规则；
+该规则不使用SIGKILL，也不删除构建文件。
+
 后续可选“保护桌面模式”：仅对通过 `system-tool run` 启动且明确登记的任务组执行
 限速或暂停，绝不根据进程名模糊匹配。
 

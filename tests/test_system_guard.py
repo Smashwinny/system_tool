@@ -75,6 +75,75 @@ class GuardPolicyTests(unittest.TestCase):
         self.assertEqual(result, [10])
         self.assertEqual(sent, [(10, signal.SIGTERM)])
 
+    def test_actionable_build_rows_rejects_generic_java(self):
+        rows = [
+            ProcessRow(10, "Java/Gradle", "/usr/bin/java language-server.jar", 0, 4 * system_guard.GIB, 0, "S"),
+            ProcessRow(11, "Java/Gradle", "/usr/bin/java org.gradle.launcher.daemon.bootstrap.GradleDaemon", 0,
+                       4 * system_guard.GIB, 0, "R"),
+        ]
+        with mock.patch.object(system_guard, "process_uid", return_value=1000), \
+             mock.patch.object(system_guard.os, "getuid", return_value=1000):
+            selected = system_guard.actionable_build_rows(rows, set())
+        self.assertEqual([row.pid for row in selected], [11])
+
+    def make_swap_storm_guardian(self):
+        guardian = system_guard.Guardian.__new__(system_guard.Guardian)
+        guardian.config = system_guard.GuardConfig()
+        guardian.monitor = mock.Mock()
+        guardian.ancestry = set()
+        guardian.build_history = system_guard.deque([(940, 2 * system_guard.GIB)])
+        guardian.swap_storm_since = None
+        guardian.swap_storm_throttled = set()
+        guardian.clock = mock.Mock(return_value=1000)
+        guardian.monitor.processes = [
+            ProcessRow(11, "Java/Gradle", "java org.gradle.launcher.daemon.bootstrap.GradleDaemon", 300,
+                       4 * system_guard.GIB, 0, "R")]
+        return guardian
+
+    def test_build_swap_storm_requires_growth_low_memory_and_swap_out(self):
+        guardian = self.make_swap_storm_guardian()
+        snapshot = self.snapshot(1500 * system_guard.MIB, some=12, swap_out=100 * system_guard.MIB)
+        snapshot["io_psi"] = {"full_avg10": 0}
+        with mock.patch.object(system_guard, "process_uid", return_value=1000), \
+             mock.patch.object(system_guard.os, "getuid", return_value=1000):
+            detected = guardian._build_swap_storm(snapshot)
+        self.assertIsNotNone(detected)
+        healthy = self.snapshot(6 * system_guard.GIB, some=50, swap_out=200 * system_guard.MIB)
+        healthy["io_psi"] = {"full_avg10": 50}
+        self.assertIsNone(guardian._build_swap_storm(healthy))
+
+    def test_build_swap_storm_throttles_before_termination(self):
+        guardian = self.make_swap_storm_guardian()
+        guardian.store = mock.Mock()
+        snapshot = self.snapshot(1500 * system_guard.MIB, some=12, swap_out=100 * system_guard.MIB)
+        snapshot["io_psi"] = {"full_avg10": 0}
+        with mock.patch.object(system_guard, "process_uid", return_value=1000), \
+             mock.patch.object(system_guard.os, "getuid", return_value=1000), \
+             mock.patch.object(system_guard, "descendants", return_value={11}), \
+             mock.patch.object(system_guard, "lower_build_priority", return_value=[11]), \
+             mock.patch.object(system_guard, "signal_targets") as signals:
+            self.assertIsNone(guardian._handle_build_swap_storm(snapshot))
+        signals.assert_not_called()
+        self.assertEqual(guardian.swap_storm_throttled, {11})
+
+    def test_build_swap_storm_terminates_only_after_sustained_pressure(self):
+        guardian = self.make_swap_storm_guardian()
+        guardian.store = mock.Mock()
+        guardian.store.write_incident.return_value = Path("/state/report.json")
+        guardian.swap_storm_since = 980
+        guardian.swap_storm_throttled = {11}
+        snapshot = self.snapshot(1500 * system_guard.MIB, some=12, swap_out=100 * system_guard.MIB)
+        snapshot["io_psi"] = {"full_avg10": 0}
+        with mock.patch.object(system_guard, "process_uid", return_value=1000), \
+             mock.patch.object(system_guard.os, "getuid", return_value=1000), \
+             mock.patch.object(system_guard, "descendants", return_value={11}), \
+             mock.patch.object(system_guard, "signal_targets", return_value=[11]) as signals, \
+             mock.patch.object(system_guard, "notify") as notifier:
+            result = guardian._handle_build_swap_storm(snapshot)
+        signals.assert_called_once_with({11}, signal.SIGTERM)
+        notifier.assert_called_once()
+        self.assertEqual(result["kind"], "build-swap-relief")
+
     def test_compact_sample_keeps_only_top_groups(self):
         snapshot = {
             "timestamp": "now", "cpu_percent": 1, "iowait_percent": 0, "load": [1, 1, 1],

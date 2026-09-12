@@ -30,6 +30,10 @@ PROTECTED_TOKENS = (
     "system-tool", "system_guard.py", "systemd", "init", "gnome-shell", "xorg", "gdm",
     "sshd", "gnome-terminal", "ptyxis", "dbus-daemon", "pipewire", "wireplumber",
 )
+BUILD_ACTION_TOKENS = (
+    "gradle", "gradledaemon", "cc1plus", "cc1 ", "clang", "cmake --build",
+    "ninja", "colcon build", "kotlinc", "kapt",
+)
 INVALID_HEAD_TEXT = "dispcmnctrlcmdsystemgetvblankcounter_impl: invalid head number"
 APPINDICATOR_RECURSION_TEXT = "js error: too much recursion"
 STAGE_VIEW_ERROR_TEXT = "can't update stage views"
@@ -61,6 +65,12 @@ class GuardConfig:
     stage_view_storm_per_minute: int = 6
     graphics_io_full_psi: float = 10.0
     graphics_sustain_seconds: float = 15.0
+    swap_storm_available_bytes: int = 2 * GIB
+    swap_storm_out_per_sec: float = 80 * MIB
+    swap_storm_growth_window_seconds: float = 60.0
+    swap_storm_growth_bytes: int = 768 * MIB
+    swap_storm_build_floor_bytes: int = 3 * GIB
+    swap_storm_sustain_seconds: float = 15.0
 
 
 def current_boot_id() -> str:
@@ -191,6 +201,31 @@ def signal_targets(pids: set[int], sig: int, sender: Callable[[int, int], None] 
     return sent
 
 
+def actionable_build_rows(processes: list[ProcessRow], ancestry: set[int]) -> list[ProcessRow]:
+    """Return only explicit compiler/Gradle processes; a generic Java process is unsafe."""
+    owner = os.getuid()
+    return [row for row in processes
+            if process_uid(row.pid) == owner and not protected_process(row, ancestry)
+            and row.group in {"Build/Compiler", "Java/Gradle"}
+            and any(token in row.command.lower() for token in BUILD_ACTION_TOKENS)]
+
+
+def lower_build_priority(pids: set[int]) -> list[int]:
+    changed: list[int] = []
+    for pid in sorted(pids):
+        try:
+            if process_uid(pid) != os.getuid():
+                continue
+            os.setpriority(os.PRIO_PROCESS, pid, 15)
+            if shutil_which("ionice"):
+                subprocess.run(["ionice", "-c", "3", "-p", str(pid)], timeout=2, check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            changed.append(pid)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return changed
+
+
 def notify(title: str, body: str) -> None:
     if not shutil_which("notify-send"):
         return
@@ -268,6 +303,9 @@ class Guardian:
         self.last_desktop_action = -self.config.desktop_action_cooldown_seconds
         self.graphics_pressure_since: float | None = None
         self.last_graphics_action = -self.config.display_cooldown_seconds
+        self.build_history: deque[tuple[float, int]] = deque()
+        self.swap_storm_since: float | None = None
+        self.swap_storm_throttled: set[int] = set()
         self.ancestry = process_ancestry(os.getpid())
         unclean = previous_boot_was_unclean(self.store, current_boot_id())
         if unclean:
@@ -398,6 +436,70 @@ class Guardian:
         self.last_graphics_action = now
         return payload
 
+    def _build_swap_storm(self, snapshot: dict[str, Any]) -> tuple[str, list[ProcessRow]] | None:
+        now = self.clock()
+        rows = actionable_build_rows(self.monitor.processes, self.ancestry)
+        rss = sum(row.rss for row in rows)
+        self.build_history.append((now, rss))
+        cutoff = now - self.config.swap_storm_growth_window_seconds
+        while len(self.build_history) > 1 and self.build_history[1][0] <= cutoff:
+            self.build_history.popleft()
+        growth = rss - self.build_history[0][1]
+        memory = snapshot["memory"]
+        mem_some = float(snapshot.get("memory_psi", {}).get("some_avg10", 0))
+        io_full = float(snapshot.get("io_psi", {}).get("full_avg10", 0))
+        resource_storm = (
+            int(memory["available"]) <= self.config.swap_storm_available_bytes
+            and float(memory.get("swap_out_per_sec", 0)) >= self.config.swap_storm_out_per_sec
+        )
+        fast_growth = (rss >= self.config.swap_storm_build_floor_bytes
+                       and growth >= self.config.swap_storm_growth_bytes)
+        if not rows or not resource_storm or not fast_growth:
+            self.swap_storm_since = None
+            self.swap_storm_throttled.clear()
+            return None
+        self.swap_storm_since = self.swap_storm_since or now
+        reason = (f"build RSS {human_bytes(rss)} (+{human_bytes(growth)}), available "
+                  f"{human_bytes(memory['available'])}, swap-out "
+                  f"{human_bytes(memory.get('swap_out_per_sec', 0))}/s, "
+                  f"PSI memory/I/O {mem_some:.1f}/{io_full:.1f}%")
+        return reason, rows
+
+    def _handle_build_swap_storm(self, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+        detected = self._build_swap_storm(snapshot)
+        if not detected:
+            return None
+        reason, rows = detected
+        roots = {row.pid for row in rows}
+        targets = descendants(roots) - self.ancestry
+        if not self.swap_storm_throttled:
+            changed = lower_build_priority(targets)
+            self.swap_storm_throttled.update(changed)
+            self.store.write_incident({
+                "kind": "build-throttle", "timestamp": time.strftime("%F %T"), "reason": reason,
+                "pids": changed, "automatic_action": "lower CPU and I/O priority",
+                "notification": "silent; reversible priority reduction",
+            })
+            return None
+        if self.clock() - float(self.swap_storm_since) < self.config.swap_storm_sustain_seconds:
+            return None
+        term_sent = signal_targets(targets, signal.SIGTERM)
+        payload = {
+            "kind": "build-swap-relief", "timestamp": time.strftime("%F %T"), "reason": reason,
+            "processes": [{"pid": row.pid, "command": row.command[:300], "rss": row.rss,
+                           "swap": row.swap} for row in rows[:30]],
+            "sigterm_pids": term_sent, "automatic_action": "SIGTERM exact build process tree",
+            "files_deleted": False,
+        }
+        path = self.store.write_incident(payload)
+        if term_sent:
+            notify("system-tool：已阻止构建导致的卡死",
+                   f"已正常终止持续制造换页的构建进程；没有删除文件。\n报告：{path}")
+        self.swap_storm_since = None
+        self.swap_storm_throttled.clear()
+        self.last_action = self.clock()
+        return payload
+
     def _act(self, snapshot: dict[str, Any], reason: str) -> dict[str, Any] | None:
         selected = select_offender(self.monitor.processes, self.config.offender_min_bytes,
                                    ancestry=self.ancestry)
@@ -464,6 +566,7 @@ class Guardian:
                 graphics_reason = self._graphics_risk(snapshot, summary)
                 if graphics_reason:
                     self._suppress_layout_checks(graphics_reason, snapshot)
+                self._handle_build_swap_storm(snapshot)
                 if (state == "critical" and started - self.last_action >= self.config.action_cooldown_seconds):
                     if self._act(snapshot, detail):
                         self.last_action = self.clock()
