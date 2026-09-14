@@ -54,6 +54,7 @@ class GuardConfig:
     term_grace_seconds: float = 10.0
     action_cooldown_seconds: float = 600.0
     nvrm_burst_per_minute: int = 10
+    invalid_head_burst_per_minute: int = 20
     log_storm_per_minute: int = 100
     kernel_notification_cooldown_seconds: float = 600.0
     display_error_unlocked_sustain_seconds: float = 60.0
@@ -330,16 +331,23 @@ class Guardian:
             is_xid = bool(re.search(r"\bnvrm\b.*\bxid\b|\bxid\s*[:(]", lowered))
             is_invalid_head = INVALID_HEAD_TEXT in message.lower()
             if is_invalid_head:
+                if count >= self.config.invalid_head_burst_per_minute:
+                    self.display_error_since.pop(key, None)
+                    qualifies = True
+                else:
+                    qualifies = False
                 lock_state = screen_lock_state()
                 last_event = float(top.get("last_time", now))
                 event_is_fresh = now - last_event <= max(15.0, self.config.sample_interval * 2)
                 if lock_state == "locked" or not event_is_fresh:
                     self.display_error_since.pop(key, None)
                     continue
-                started = self.display_error_since.setdefault(key, now)
-                if now - started < self.config.display_error_unlocked_sustain_seconds:
-                    continue
-            qualifies = (is_xid or (is_nvrm and count >= self.config.nvrm_burst_per_minute) or
+                if not qualifies:
+                    started = self.display_error_since.setdefault(key, now)
+                    if now - started < self.config.display_error_unlocked_sustain_seconds:
+                        continue
+            qualifies = (is_invalid_head or is_xid or
+                         (is_nvrm and count >= self.config.nvrm_burst_per_minute) or
                          count >= self.config.log_storm_per_minute)
             if not qualifies:
                 continue

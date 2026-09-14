@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the layout repair only at startup, DRM hotplug, or screen unlock."""
+"""Run layout repair only after a real DRM connector-state change."""
 
 from __future__ import annotations
 
@@ -55,8 +55,6 @@ def display_suppressed(now: float | None = None, state_root: Path = STATE_ROOT) 
 def should_run_layout(kind: str, previous: tuple, current: tuple, suppressed: bool) -> bool:
     if suppressed:
         return False
-    if kind in {"startup", "unlock"}:
-        return True
     return kind == "drm" and current != previous
 
 
@@ -64,8 +62,6 @@ def event_kind(source: str, line: str) -> str | None:
     lower = line.lower()
     if source == "drm" and ("/drm/" in lower or "subsystem=drm" in lower):
         return "drm"
-    if source == "lock" and "activechanged" in lower and "false" in lower:
-        return "unlock"
     return None
 
 
@@ -74,16 +70,12 @@ def main() -> int:
     os.environ.setdefault("XAUTHORITY", f"/run/user/{os.getuid()}/gdm/Xauthority")
     processes = {
         "drm": start(["udevadm", "monitor", "--kernel", "--subsystem-match=drm"]),
-        "lock": start(["gdbus", "monitor", "--session", "--dest", "org.gnome.ScreenSaver",
-                       "--object-path", "/org/gnome/ScreenSaver"]),
     }
     selector = selectors.DefaultSelector()
     for source, process in processes.items():
         if process and process.stdout:
             selector.register(process.stdout, selectors.EVENT_READ, source)
     signature = connector_signature()
-    if should_run_layout("startup", signature, signature, display_suppressed()):
-        run_layout()
     pending_at: float | None = None
     pending_kind: str | None = None
     try:
@@ -97,7 +89,7 @@ def main() -> int:
                 kind = event_kind(str(key.data), line)
                 if kind:
                     pending_at = time.monotonic() + 2.0
-                    pending_kind = "unlock" if kind == "unlock" else (pending_kind or "drm")
+                    pending_kind = pending_kind or "drm"
             if pending_at is not None and time.monotonic() >= pending_at:
                 current = connector_signature()
                 if should_run_layout(pending_kind or "drm", signature, current, display_suppressed()):

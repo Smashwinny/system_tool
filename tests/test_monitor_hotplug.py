@@ -13,19 +13,20 @@ class HotplugEventTests(unittest.TestCase):
     def test_ignores_non_drm_event(self):
         self.assertIsNone(event_kind("drm", "change /devices/pci/sound/card1"))
 
-    def test_accepts_unlock_only(self):
-        self.assertEqual(event_kind("lock", "ActiveChanged (false,)"), "unlock")
+    def test_ignores_lock_and_unlock(self):
+        self.assertIsNone(event_kind("lock", "ActiveChanged (false,)"))
         self.assertIsNone(event_kind("lock", "ActiveChanged (true,)"))
 
     def test_repeated_drm_event_does_not_run_layout(self):
         signature = (("card1-HDMI-A-1", "connected"),)
         self.assertFalse(should_run_layout("drm", signature, signature, False))
 
-    def test_connector_change_and_unlock_run_layout(self):
+    def test_only_connector_change_runs_layout(self):
         old = (("card1-HDMI-A-1", "disconnected"),)
         new = (("card1-HDMI-A-1", "connected"),)
         self.assertTrue(should_run_layout("drm", old, new, False))
-        self.assertTrue(should_run_layout("unlock", new, new, False))
+        self.assertFalse(should_run_layout("unlock", new, new, False))
+        self.assertFalse(should_run_layout("startup", new, new, False))
 
     def test_cooldown_blocks_all_layout_checks(self):
         self.assertFalse(should_run_layout("unlock", (), (), True))

@@ -290,6 +290,18 @@ class GuardPolicyTests(unittest.TestCase):
         guardian.store.set_display_cooldown.assert_called_once()
         notifier.assert_not_called()
 
+    def test_invalid_head_burst_immediately_suppresses_layout_checks(self):
+        guardian = self.make_kernel_guardian()
+        summary = self.invalid_head_summary(1000)
+        summary[0]["count"] = 20
+        with mock.patch.object(system_guard.time, "time", return_value=1000), \
+             mock.patch.object(system_guard, "screen_lock_state", return_value="unlocked"), \
+             mock.patch.object(system_guard, "notify") as notifier:
+            guardian._kernel_incident(summary)
+        guardian.store.write_incident.assert_called_once()
+        guardian.store.set_display_cooldown.assert_called_once()
+        notifier.assert_not_called()
+
 
 class IncidentStoreTests(unittest.TestCase):
     def test_writes_report_and_lists_it(self):
