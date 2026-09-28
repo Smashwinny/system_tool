@@ -10,8 +10,13 @@ BACKUP_DIR="$INSTALL_LIB/backups"
 LAYOUT_SCRIPT="$INSTALL_BIN/fix-monitor-layout.sh"
 LAYOUT_BACKUP="$BACKUP_DIR/fix-monitor-layout.sh.pre-1.2.1"
 LAYOUT_STAGED="$INSTALL_BIN/.fix-monitor-layout.sh.new"
+LEGACY_WINDOW_REPAIR="$INSTALL_LIB/window_repair.py"
+LEGACY_WINDOW_REPAIR_BACKUP="$BACKUP_DIR/window_repair.py.disabled"
 
 mkdir -p "$INSTALL_LIB" "$INSTALL_BIN" "$APPLICATION_DIR" "$USER_UNIT_DIR" "$BACKUP_DIR"
+if [ -f "$LEGACY_WINDOW_REPAIR" ] && [ ! -e "$LEGACY_WINDOW_REPAIR_BACKUP" ]; then
+    mv "$LEGACY_WINDOW_REPAIR" "$LEGACY_WINDOW_REPAIR_BACKUP"
+fi
 if [ -f "$LAYOUT_SCRIPT" ] && [ ! -e "$LAYOUT_BACKUP" ]; then
     install -m 0755 "$LAYOUT_SCRIPT" "$LAYOUT_BACKUP"
 fi

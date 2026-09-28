@@ -21,15 +21,16 @@ class HotplugEventTests(unittest.TestCase):
         signature = (("card1-HDMI-A-1", "connected"),)
         self.assertFalse(should_run_layout("drm", signature, signature, False))
 
-    def test_only_connector_change_runs_layout(self):
+    def test_startup_and_connector_change_run_layout(self):
         old = (("card1-HDMI-A-1", "disconnected"),)
         new = (("card1-HDMI-A-1", "connected"),)
         self.assertTrue(should_run_layout("drm", old, new, False))
         self.assertFalse(should_run_layout("unlock", new, new, False))
-        self.assertFalse(should_run_layout("startup", new, new, False))
+        self.assertTrue(should_run_layout("startup", new, new, False))
 
     def test_cooldown_blocks_all_layout_checks(self):
         self.assertFalse(should_run_layout("unlock", (), (), True))
+        self.assertFalse(should_run_layout("startup", (), (), True))
         with TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "display-cooldown.json").write_text(

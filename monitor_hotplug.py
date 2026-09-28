@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run layout repair only after a real DRM connector-state change."""
+"""Repair layout once at startup or after a real DRM connector-state change."""
 
 from __future__ import annotations
 
@@ -55,6 +55,8 @@ def display_suppressed(now: float | None = None, state_root: Path = STATE_ROOT) 
 def should_run_layout(kind: str, previous: tuple, current: tuple, suppressed: bool) -> bool:
     if suppressed:
         return False
+    if kind == "startup":
+        return True
     return kind == "drm" and current != previous
 
 
@@ -76,6 +78,8 @@ def main() -> int:
         if process and process.stdout:
             selector.register(process.stdout, selectors.EVENT_READ, source)
     signature = connector_signature()
+    if should_run_layout("startup", signature, signature, display_suppressed()):
+        run_layout()
     pending_at: float | None = None
     pending_kind: str | None = None
     try:
