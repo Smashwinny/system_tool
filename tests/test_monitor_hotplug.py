@@ -3,7 +3,9 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from monitor_hotplug import connector_signature, display_suppressed, event_kind, should_run_layout
+from monitor_hotplug import (
+    connector_signature, display_suppressed, event_delay, event_kind, should_run_layout,
+)
 
 
 class HotplugEventTests(unittest.TestCase):
@@ -13,9 +15,16 @@ class HotplugEventTests(unittest.TestCase):
     def test_ignores_non_drm_event(self):
         self.assertIsNone(event_kind("drm", "change /devices/pci/sound/card1"))
 
-    def test_ignores_lock_and_unlock(self):
-        self.assertIsNone(event_kind("lock", "ActiveChanged (false,)"))
-        self.assertIsNone(event_kind("lock", "ActiveChanged (true,)"))
+    def test_tracks_lock_and_unlock_without_running_layout_directly(self):
+        self.assertEqual(event_kind("lock", "ActiveChanged (false,)"), "unlock")
+        self.assertEqual(event_kind("lock", "ActiveChanged (true,)"), "lock")
+        self.assertFalse(should_run_layout("unlock", (), (), False))
+
+    def test_accepts_randr_change_with_longer_settle_delay(self):
+        self.assertEqual(event_kind("randr", "RRScreenChangeNotify event"), "randr")
+        self.assertTrue(should_run_layout("randr", (), (), False))
+        self.assertEqual(event_delay("randr"), 10.0)
+        self.assertEqual(event_delay("drm"), 2.0)
 
     def test_repeated_drm_event_does_not_run_layout(self):
         signature = (("card1-HDMI-A-1", "connected"),)

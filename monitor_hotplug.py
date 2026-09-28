@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair layout once at startup or after a real DRM connector-state change."""
+"""Repair layout after real DRM or X11 RandR changes, without polling."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ LAYOUT_SCRIPT = Path(os.environ.get(
     "SYSTEM_TOOL_LAYOUT_SCRIPT", Path.home() / ".local" / "bin" / "fix-monitor-layout.sh"))
 STATE_ROOT = Path(os.environ.get(
     "XDG_STATE_HOME", Path.home() / ".local" / "state")) / "system-tool"
+LAYOUT_MIN_INTERVAL = 30.0
 
 
 def start(command: list[str]) -> subprocess.Popen[str] | None:
@@ -57,6 +58,8 @@ def should_run_layout(kind: str, previous: tuple, current: tuple, suppressed: bo
         return False
     if kind == "startup":
         return True
+    if kind == "randr":
+        return True
     return kind == "drm" and current != previous
 
 
@@ -64,7 +67,20 @@ def event_kind(source: str, line: str) -> str | None:
     lower = line.lower()
     if source == "drm" and ("/drm/" in lower or "subsystem=drm" in lower):
         return "drm"
+    if source == "randr" and "notify event" in lower:
+        return "randr"
+    if source == "lock" and "activechanged" in lower:
+        if "true" in lower:
+            return "lock"
+        if "false" in lower:
+            return "unlock"
     return None
+
+
+def event_delay(kind: str) -> float:
+    # Give the NVIDIA/GNOME transition time to settle and the guard time to
+    # install its display cooldown if the event becomes an error storm.
+    return 10.0 if kind == "randr" else 2.0
 
 
 def main() -> int:
@@ -72,6 +88,9 @@ def main() -> int:
     os.environ.setdefault("XAUTHORITY", f"/run/user/{os.getuid()}/gdm/Xauthority")
     processes = {
         "drm": start(["udevadm", "monitor", "--kernel", "--subsystem-match=drm"]),
+        "randr": start(["stdbuf", "-oL", "xev", "-root", "-event", "randr"]),
+        "lock": start(["gdbus", "monitor", "--session", "--dest", "org.gnome.ScreenSaver",
+                       "--object-path", "/org/gnome/ScreenSaver"]),
     }
     selector = selectors.DefaultSelector()
     for source, process in processes.items():
@@ -80,8 +99,11 @@ def main() -> int:
     signature = connector_signature()
     if should_run_layout("startup", signature, signature, display_suppressed()):
         run_layout()
+    last_layout_at = time.monotonic()
     pending_at: float | None = None
     pending_kind: str | None = None
+    screen_locked = False
+    dirty_while_locked = False
     try:
         while selector.get_map():
             timeout = max(0.0, pending_at - time.monotonic()) if pending_at is not None else None
@@ -91,13 +113,27 @@ def main() -> int:
                     selector.unregister(key.fileobj)
                     continue
                 kind = event_kind(str(key.data), line)
-                if kind:
-                    pending_at = time.monotonic() + 2.0
-                    pending_kind = pending_kind or "drm"
+                if kind == "lock":
+                    screen_locked = True
+                elif kind == "unlock":
+                    screen_locked = False
+                    if dirty_while_locked:
+                        pending_at = time.monotonic() + 15.0
+                        pending_kind = "randr"
+                        dirty_while_locked = False
+                elif kind == "randr" and screen_locked:
+                    dirty_while_locked = True
+                elif kind:
+                    pending_at = time.monotonic() + event_delay(kind)
+                    pending_kind = "randr" if kind == "randr" else (pending_kind or "drm")
             if pending_at is not None and time.monotonic() >= pending_at:
                 current = connector_signature()
-                if should_run_layout(pending_kind or "drm", signature, current, display_suppressed()):
+                interval_ok = time.monotonic() - last_layout_at >= LAYOUT_MIN_INTERVAL
+                if (interval_ok and
+                        should_run_layout(pending_kind or "drm", signature, current,
+                                          display_suppressed())):
                     run_layout()
+                    last_layout_at = time.monotonic()
                 signature = current
                 pending_at = None
                 pending_kind = None

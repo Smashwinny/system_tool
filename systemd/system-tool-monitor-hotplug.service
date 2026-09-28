@@ -1,5 +1,5 @@
 [Unit]
-Description=Repair monitor layout once at login or on real DRM hotplug
+Description=Maintain monitor layout from DRM and X11 RandR change events
 After=graphical-session.target
 
 [Service]

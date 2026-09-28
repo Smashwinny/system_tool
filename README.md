@@ -91,9 +91,10 @@ NVIDIA 的 `invalid head number` 在锁屏期间归类为显示切换事件：�
 60秒才升级告警。`NVRM Xid`、OOM和其他内核错误不受此静默规则影响。
 
 双屏排版不再每5秒调用 `xrandr`。`system-tool-monitor-hotplug.service` 登录启动时只
-检查一次目标布局，之后常驻等待 DRM 热插拔事件；只有连接器状态确实变化时才再次
-检查，避免显示查询自身产生DRM反馈循环。锁屏和解锁都不查询。这样保留登录时的外屏
-在左、内屏在右且内屏为主屏约束，同时避免解锁风暴。守卫同时检查 GNOME Shell 的 AppIndicators 递归和
+检查一次目标布局，之后监听 DRM 热插拔和 X11 RandR 布局变化事件，不做周期查询。
+RandR变化稳定10秒后、且距上次检查至少30秒才允许检查一次；锁屏期间只记录变化，
+解锁15秒后再受熔断状态约束决定是否检查。这样保留运行中的布局约束，同时避免
+`xrandr`反馈循环和解锁风暴。守卫同时检查 GNOME Shell 的 AppIndicators 递归和
 一分钟内异常内存增长；命中时只临时停用托盘扩展并保存报告，不结束桌面会话。
 
 当 NVIDIA `invalid head` 持续产生，或 GNOME Shell stage-view错误形成风暴，或图形
