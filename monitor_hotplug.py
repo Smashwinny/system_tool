@@ -86,10 +86,11 @@ def main() -> int:
     # Session restoration can reuse coordinates from an older monitor layout.
     # This path only asks the window manager and never invokes xrandr.
     repair_windows()
-    # Some applications restore after the user service starts. One delayed pass
-    # catches those windows without adding a timer or continuous polling.
-    time.sleep(5.0)
-    repair_windows()
+    # Some applications restore their own stale geometry in several phases.
+    # Retry only during the first 30 seconds; this is bounded, not a timer.
+    for delay in (5.0, 10.0, 15.0):
+        time.sleep(delay)
+        repair_windows()
     pending_at: float | None = None
     pending_kind: str | None = None
     try:
