@@ -1,5 +1,5 @@
 [Unit]
-Description=Repair monitor layout on DRM hotplug or screen unlock
+Description=Repair monitor layout on DRM hotplug and recover off-screen windows
 After=graphical-session.target
 
 [Service]
