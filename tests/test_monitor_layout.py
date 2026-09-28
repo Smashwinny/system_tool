@@ -11,7 +11,7 @@ TMP_ROOT = PROJECT_ROOT / "tmp"
 
 
 class MonitorLayoutTests(unittest.TestCase):
-    def run_script(self, gdbus_output=None, gdbus_ok=True):
+    def run_script(self, gdbus_output=None, gdbus_ok=True, layout=None):
         TMP_ROOT.mkdir(exist_ok=True)
         with TemporaryDirectory(dir=TMP_ROOT) as temp:
             root = Path(temp)
@@ -29,9 +29,13 @@ class MonitorLayoutTests(unittest.TestCase):
             loginctl.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
             loginctl.chmod(0o755)
             xrandr = bin_dir / "xrandr"
+            query_layout = layout or (
+                "HDMI-1-0 connected 2560x1440+0+160 normal\n"
+                "eDP-1 connected primary 1920x1200+2560+0 normal"
+            )
             xrandr.write_text(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XRANDR_MARKER\"\n"
-                "[ \"$1\" != --query ] || printf '%s\\n' 'HDMI-1-0 connected 2560x1440+0+160'\n"
+                f"[ \"$1\" != --query ] || printf '%s\\n' '{query_layout}'\n"
                 "exit 0\n",
                 encoding="utf-8",
             )
@@ -59,6 +63,27 @@ class MonitorLayoutTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0], "--query")
         self.assertIn("--output HDMI-1-0", calls[1])
+
+    def test_correct_layout_is_not_applied_again(self):
+        layout = (
+            "HDMI-1-0 connected 2560x1440+0+0 normal\n"
+            "eDP-1 connected primary 1920x1200+2560+0 normal"
+        )
+        _, calls = self.run_script("(false,)", layout=layout)
+        self.assertEqual(calls, ["--query"])
+
+    def test_other_layout_drift_is_repaired(self):
+        layout = (
+            "HDMI-1-0 connected 1920x1080+0+0 normal\n"
+            "eDP-1 connected primary 1920x1200+1920+0 normal"
+        )
+        _, calls = self.run_script("(false,)", layout=layout)
+        self.assertEqual(len(calls), 2)
+
+    def test_missing_external_monitor_is_not_forced(self):
+        layout = "eDP-1 connected primary 1920x1200+0+0 normal"
+        _, calls = self.run_script("(false,)", layout=layout)
+        self.assertEqual(calls, ["--query"])
 
 
 if __name__ == "__main__":

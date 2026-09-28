@@ -46,8 +46,18 @@ fi
 
 layout="$(xrandr --query 2>/dev/null)" || exit 0
 
-if printf '%s\n' "$layout" | grep -q '^HDMI-1-0 connected 2560x1440+0+160'; then
-  xrandr \
-    --output HDMI-1-0 --mode 2560x1440 --rate 59.95 --pos 0x0 \
-    --output eDP-1 --mode 1920x1200 --rate 60 --pos 2560x0 --primary
+printf '%s\n' "$layout" | grep -q '^HDMI-1-0 connected ' || exit 0
+printf '%s\n' "$layout" | grep -q '^eDP-1 connected ' || exit 0
+
+hdmi_ok=0
+edp_ok=0
+printf '%s\n' "$layout" | grep -q '^HDMI-1-0 connected 2560x1440+0+0 ' && hdmi_ok=1
+printf '%s\n' "$layout" | grep -q '^eDP-1 connected primary 1920x1200+2560+0 ' && edp_ok=1
+
+if [ "$hdmi_ok" -eq 1 ] && [ "$edp_ok" -eq 1 ]; then
+  exit 0
 fi
+
+xrandr \
+  --output HDMI-1-0 --mode 2560x1440 --rate 59.95 --pos 0x0 \
+  --output eDP-1 --mode 1920x1200 --rate 60 --pos 2560x0 --primary
