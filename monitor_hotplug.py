@@ -10,8 +10,6 @@ import subprocess
 import time
 from pathlib import Path
 
-from window_repair import repair_offscreen_windows
-
 
 LAYOUT_SCRIPT = Path(os.environ.get(
     "SYSTEM_TOOL_LAYOUT_SCRIPT", Path.home() / ".local" / "bin" / "fix-monitor-layout.sh"))
@@ -34,11 +32,6 @@ def run_layout() -> None:
         subprocess.run([str(LAYOUT_SCRIPT)], timeout=15, check=False)
     except (OSError, subprocess.TimeoutExpired):
         pass
-
-
-def repair_windows() -> None:
-    """Repair stale absolute positions without touching display hardware."""
-    repair_offscreen_windows()
 
 
 def connector_signature(root: Path = Path("/sys/class/drm")) -> tuple[tuple[str, str], ...]:
@@ -83,13 +76,6 @@ def main() -> int:
         if process and process.stdout:
             selector.register(process.stdout, selectors.EVENT_READ, source)
     signature = connector_signature()
-    # Session restoration can reuse coordinates from an older monitor layout.
-    # This path only asks the window manager and never invokes xrandr.
-    repair_windows()
-    # Some applications restore after the user service starts. One delayed pass
-    # catches those windows without adding a timer or continuous polling.
-    time.sleep(5.0)
-    repair_windows()
     pending_at: float | None = None
     pending_kind: str | None = None
     try:
@@ -108,8 +94,6 @@ def main() -> int:
                 current = connector_signature()
                 if should_run_layout(pending_kind or "drm", signature, current, display_suppressed()):
                     run_layout()
-                    time.sleep(2.0)
-                    repair_windows()
                 signature = current
                 pending_at = None
                 pending_kind = None

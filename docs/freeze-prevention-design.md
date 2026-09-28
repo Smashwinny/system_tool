@@ -70,16 +70,9 @@
 变化才调用布局脚本，从源头阻断 `xrandr` → DRM change → 再次 `xrandr` 的反馈循环。
 图形错误风暴触发后，布局检查熔断10分钟；当前排版不改变，服务仍继续监听事件。
 
-登录恢复可能沿用旧显示拓扑的绝对窗口坐标。服务启动时执行一次并在5秒后补查一次；
-真实接口变化后的布局处理完成后也检查一次。检查使用有2秒超时的 `wmctrl` 查询全局
-工作区，不调用 `xrandr`。只有不足 80×32 像素
-可操作区域的普通应用窗口会被移回工作区；桌面和Shell窗口被排除，窗口不会被关闭或
-缩放。查询失败或超时则放弃本轮修复，避免保护程序自身造成桌面阻塞。
-
 建议文件：
 
 - `monitor_hotplug.py`：监听 `udevadm monitor --kernel --subsystem-match=drm`。
-- `window_repair.py`：保守修复旧显示拓扑遗留的完全越界窗口。
 - `systemd/system-tool-monitor-hotplug.service`：用户级常驻单元。
 - `monitor-layout.conf`：目标输出、分辨率、刷新率和相对位置。
 
